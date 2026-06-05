@@ -1,11 +1,13 @@
 package com.example.wallet.handler.dto;
 
+import com.example.wallet.handler.dto.validation.NotSelfTransfer;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
 import java.math.BigDecimal;
 
+@NotSelfTransfer
 public record CreateTransferRequest(
 
         @NotBlank(message = "idempotencyKey must not be blank")
@@ -21,4 +23,3 @@ public record CreateTransferRequest(
         @Positive(message = "amount must be positive")
         BigDecimal amount
 ) {}
-

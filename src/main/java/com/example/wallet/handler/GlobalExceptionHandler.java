@@ -1,6 +1,7 @@
 package com.example.wallet.handler;
 
 import com.example.wallet.exception.InsufficientFundsException;
+import com.example.wallet.exception.InvalidTransferStateException;
 import com.example.wallet.exception.WalletNotFoundException;
 import com.example.wallet.handler.dto.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -21,6 +22,13 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("insufficient_funds"));
     }
 
+    @ExceptionHandler(InvalidTransferStateException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidTransferState(InvalidTransferStateException ex) {
+        log.warn("Invalid state transition: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(new ErrorResponse("transfer_already_completed"));
+    }
+
     @ExceptionHandler(WalletNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleWalletNotFound(WalletNotFoundException ex) {
         log.warn("Wallet not found: {}", ex.getMessage());
@@ -30,10 +38,15 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidationError(MethodArgumentNotValidException ex) {
+        // Field errors first (e.g. @NotBlank, @Positive)
         String message = ex.getBindingResult().getFieldErrors().stream()
                 .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
                 .findFirst()
-                .orElse("validation_error");
+                // Fall back to class-level errors (e.g. @NotSelfTransfer)
+                .orElseGet(() -> ex.getBindingResult().getGlobalErrors().stream()
+                        .map(ge -> ge.getDefaultMessage())
+                        .findFirst()
+                        .orElse("validation_error"));
         log.warn("Validation error: {}", message);
         return ResponseEntity.badRequest().body(new ErrorResponse(message));
     }

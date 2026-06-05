@@ -12,7 +12,6 @@ import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Repository
 @RequiredArgsConstructor
@@ -38,21 +37,18 @@ public class WalletRepositoryImpl implements WalletRepository {
             return Collections.emptyList();
         }
 
-        // Build a positional IN clause — JdbcClient does not support Collection binding
-        // for FOR UPDATE queries directly. We use a plain string with named params per id.
-        // IDs must already be sorted by the caller (alphabetically) to guarantee
-        // consistent lock ordering and prevent deadlocks.
-        String placeholders = walletIds.stream()
-                .map(id -> "'" + id.replace("'", "''") + "'")   // escape single quotes
-                .collect(Collectors.joining(", "));
-
+        // JdbcClient passes the List to NamedParameterJdbcTemplate which expands it
+        // into positional bind parameters — no string concatenation, no SQL injection risk.
+        // ORDER BY id enforces consistent lock ordering at the DB level, preventing deadlocks
+        // even if the caller passes IDs in any order.
         return jdbcClient.sql("""
                         SELECT id, balance, created_at
                         FROM wallets
-                        WHERE id IN (%s)
+                        WHERE id IN (:ids)
                         ORDER BY id
                         FOR UPDATE
-                        """.formatted(placeholders))
+                        """)
+                .param("ids", walletIds)
                 .query(WalletRepositoryImpl::mapRow)
                 .list();
     }
