@@ -14,9 +14,9 @@ public interface WalletRepository {
     Optional<Wallet> findById(String walletId);
 
     /**
-     * Acquire row-level locks on the given wallet IDs in the order provided.
-     * Callers must pass IDs sorted consistently (e.g. alphabetically)
-     * to prevent deadlocks under concurrent transactions.
+     * Acquire row-level locks on the given wallet IDs.
+     * * Note: Caller sorting is not required as the repository implementation
+     * enforces a consistent lock ordering via SQL (ORDER BY id) to prevent deadlocks.
      *
      * Must be called within an active transaction.
      */

@@ -7,6 +7,7 @@ import com.example.wallet.handler.dto.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -39,15 +40,19 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleValidationError(MethodArgumentNotValidException ex) {
         // Field errors first (e.g. @NotBlank, @Positive)
-        String message = ex.getBindingResult().getFieldErrors().stream()
-                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
-                .findFirst()
-                // Fall back to class-level errors (e.g. @NotSelfTransfer)
-                .orElseGet(() -> ex.getBindingResult().getGlobalErrors().stream()
-                        .map(ge -> ge.getDefaultMessage())
-                        .findFirst()
-                        .orElse("validation_error"));
-        log.warn("Validation error: {}", message);
+        String field = null;
+        String message = "validation_error";
+
+        if (!ex.getBindingResult().getFieldErrors().isEmpty()) {
+            FieldError fieldError = ex.getBindingResult().getFieldErrors().get(0);
+            field = fieldError.getField();
+            message = fieldError.getDefaultMessage();
+        } else if (!ex.getBindingResult().getGlobalErrors().isEmpty()) {
+            // Fall back to class-level errors (e.g. @NotSelfTransfer)
+            message = ex.getBindingResult().getGlobalErrors().get(0).getDefaultMessage();
+        }
+
+        log.warn("Validation error on field [{}]: {}", field, message);
         return ResponseEntity.badRequest().body(new ErrorResponse(message));
     }
 
