@@ -33,7 +33,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class TransferServiceImpl implements TransferService {
 
-    static final String ENDPOINT = "POST /transfers";
+    public static final String ENDPOINT = "POST /transfers";
 
     private final TransferRepository transferRepository;
     private final WalletRepository walletRepository;
@@ -103,22 +103,22 @@ public class TransferServiceImpl implements TransferService {
                 return innerCached.get();
             }
 
-            // Step 3: Insert transfer in PENDING.
-            // ON CONFLICT DO NOTHING handles the rare case where two threads race
-            // past both idempotency checks simultaneously (e.g. brand-new key with
-            // very high concurrency). PostgreSQL serialises them via the unique-index
-            // lock on idempotency_key: the second INSERT waits until the first tx
-            // commits, then hits DO NOTHING and re-reads the committed terminal state.
-            Transfer transfer = transferRepository.insertPending(request);
-
-            if (transfer.status() != TransferStatus.PENDING) {
-                // Another thread committed the transfer between Step 2 and here.
-                log.debug("Transfer reached terminal state before processing transferId={}", transfer.id());
-                metrics.recordReplay(sample, "on_conflict");
-                return TransferResponse.from(transfer, false);
-            }
-
-            // Step 4: Lock wallets in sorted order — prevents deadlocks.
+            // Step 3: Lock wallets in sorted order BEFORE inserting the transfer.
+            //
+            // Root cause of FK-check deadlock (original order: INSERT then FOR UPDATE):
+            //   PostgreSQL FK validation acquires FOR KEY SHARE on referenced wallet rows.
+            //   FOR KEY SHARE conflicts with FOR UPDATE. Two concurrent threads each hold
+            //   FOR KEY SHARE on the same wallet and each wait for FOR UPDATE → circular
+            //   wait → deadlock detected by PostgreSQL.
+            //
+            // Fix: acquire FOR UPDATE first. FOR UPDATE subsumes FOR KEY SHARE, so our
+            //   own FK check (in the INSERT below) is granted immediately. Every other
+            //   thread blocks at this lockForUpdate call rather than inside the INSERT,
+            //   eliminating the circular dependency entirely.
+            //
+            // Bonus: validating wallet existence here (before the INSERT) means a
+            //   missing wallet throws WalletNotFoundException instead of a FK-violation
+            //   DataIntegrityViolationException, giving callers the correct 404 response.
             List<String> sortedIds = List.of(request.fromWalletId(), request.toWalletId())
                     .stream().sorted().toList();
 
@@ -133,6 +133,21 @@ public class TransferServiceImpl implements TransferService {
                     .filter(w -> w.id().equals(request.toWalletId()))
                     .findFirst()
                     .orElseThrow(() -> new WalletNotFoundException(request.toWalletId()));
+
+            // Step 4: Insert transfer in PENDING — safe now: wallets are validated and locked.
+            // ON CONFLICT DO NOTHING handles threads that race past both idempotency checks
+            // simultaneously. The second thread's INSERT waits on the unique-index lock for
+            // idempotency_key, hits DO NOTHING after the first tx commits, then re-reads the
+            // committed terminal state below.
+            Transfer transfer = transferRepository.insertPending(request);
+
+            if (transfer.status() != TransferStatus.PENDING) {
+                // Idempotent replay via on-conflict path — wallets locked unnecessarily but
+                // correctness is maintained; no balance changes were applied.
+                log.debug("Transfer reached terminal state before processing transferId={}", transfer.id());
+                metrics.recordReplay(sample, "on_conflict");
+                return TransferResponse.from(transfer, false);
+            }
 
             // Step 5: Balance check → FAILED (no ledger entries written)
             if (fromWallet.balance().compareTo(request.amount()) < 0) {

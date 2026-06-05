@@ -16,8 +16,7 @@ public class WalletServiceImpl implements WalletService {
 
     @Override
     public Optional<Wallet> getWallet(String walletId) {
-        // TODO: implement
-        throw new UnsupportedOperationException("Not yet implemented");
+        return walletRepository.findById(walletId);
     }
 }
 
