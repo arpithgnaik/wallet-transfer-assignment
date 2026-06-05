@@ -1,0 +1,8 @@
+spring:
+  datasource:
+    url: jdbc:tc:postgresql:16:///wallet_test_db
+    driver-class-name: org.testcontainers.jdbc.ContainerDatabaseDriver
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
